@@ -35,7 +35,7 @@ def get_16S_top_phyla_colors(data_16S):
 
 def get_18S_top_phyla_colors(data_18Sv4, data_18Sv9):
     # show these classes separately from their parent phyla
-    special_18S_classes = ['Dinoflagellata', 'Bacillariophyta']
+    special_18S_classes = ['Syndiniales', 'Bacillariophyta']
     # 18Sv4 ---------------------------------------------------------------------
     taxa_18Sv4 = data_18Sv4['pr2_Taxon'].str.split(';', expand=True).iloc[:, :8]
     taxa_18Sv4.columns = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
@@ -77,7 +77,7 @@ def get_18S_top_phyla_colors(data_18Sv4, data_18Sv9):
     # colors_18Sv9['Other'] = '#71797E' # dark grey
     if set(top_8_phyla_18Sv4) != set(top_8_phyla_18Sv9):
         print('Error: v4 and v9 do not have the same top 8 phyla. Are you sure the dataset is correct?')
-    colors_18Sv9 = colors_18Sv4 # the top 8 groups should match but I'll leave the code here just in case
+    # colors_18Sv9 = colors_18Sv4 # the top 8 groups should match but I'll leave the code here just in case
 
     return (top_8_phyla_18Sv4, top_8_phyla_18Sv9, colors_18S)
 
@@ -232,281 +232,316 @@ def precompute_sunburst_figs(data_meta, data_16S, data_18Sv4, data_18Sv9):
                 taxonomies['relative_abundance'] = taxonomies['abundance_values'] / taxonomies['abundance_values'].sum()
                 taxonomies['relative_abundance'] = (taxonomies['relative_abundance'] * 100).round(2)
                 fig = px.sunburst(taxonomies, path=['Phylum', 'Class', 'Order'], values='relative_abundance',
-                                title=title)
+                                  title=title, width=700, height=700)
                 taxonomies_all[station_id][sample_type][dataset] = taxonomies
                 sunburst_figs[station_id][sample_type][dataset] = fig
             counter += 3
             print('Finished: {0:.2f}%'.format(100 * counter / total_computing), end='\r')
     print()
+    return sunburst_figs
 
 
 def precompute_stacked_bar_figs(data_meta, data_16S, data_18Sv4, data_18Sv9):
     top_10_phyla_16S, colors_16S = get_16S_top_phyla_colors(data_16S)
     top_8_phyla_18Sv4, top_8_phyla_18Sv9, colors_18S = get_18S_top_phyla_colors(data_18Sv4, data_18Sv9)
     counter = 0
-    total_computing = len(data_meta['Sta_ID'].dropna().unique()) * len(data_meta['sample_type'].dropna().unique()) * 3
+    total_computing = len(data_meta['Sta_ID'].dropna().unique())  * 3
     print(f'Pre-computing {total_computing} Stacked Bar Figures')
     stacked_bar_figs = {station_id: {} for station_id in data_meta['Sta_ID'].dropna().unique()}
     for station_id in data_meta['Sta_ID'].dropna().unique():
-        for sample_type in data_meta['sample_type'].dropna().unique():
-            stacked_bar_figs[station_id][sample_type] = {}
-            for dataset in ['16S', '18Sv4', '18Sv9']:
-                station_data = data_meta[(data_meta['Sta_ID'] == station_id) & (data_meta['sample_type'] == sample_type)]
-                station_samples = station_data['sampleid'].tolist()
-                if dataset == '16S':
-                    taxa_col_names = ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
-                    asv_cols = pd.Series(data_16S.columns).isin(station_samples).values
-                    if np.sum(asv_cols) == 0:
-                        empty_fig = go.Figure(
-                            data=[
-                                go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
-                                go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
-                            ],
-                            layout=go.Layout(
-                                title=f'Station {station_id} phyla distribution per sample',
-                                yaxis_title='Relative Abundance', height=600, width=600
-                            )
-                        )
-                        stacked_bar_figs[station_id][sample_type][dataset] = empty_fig
-                        continue
-
-                    asv_cols[0] = True
-                    station_asvs = pd.concat([data_16S.loc[:,asv_cols], data_16S['silva_Taxon']], axis=1)
-
-                    # Get relative abundances
-                    values = station_asvs.drop(['Feature.ID', 'silva_Taxon'], axis=1).fillna(0)
-                    values = values / values.sum()
-
-                    # Count occurrences of each taxonomy category
-                    taxonomies = station_asvs['silva_Taxon'].str.split('; ', expand=True)
-                    taxonomies.columns = taxa_col_names
-                    taxonomies = taxonomies.fillna('___Undetermined')[['Phylum', 'Class']]
-
-                    # get rid of the silva d__, p__, etc prefixes
-                    for col in taxonomies.columns:
-                        taxonomies[col] = taxonomies[col].apply(lambda x: x[3:])
-
-                    # Get relative abundances of top phyla / special classes
-                    taxonomies = pd.concat([taxonomies, values], axis=1)
-                    phyla_counts = taxonomies.groupby('Phylum').sum()
-                    for phylum in top_10_phyla_16S:
-                        if phylum not in phyla_counts.index:
-                            phyla_counts.loc[phylum] = 0
-                    top_phyla_counts = phyla_counts.loc[top_10_phyla_16S]
-                    other_phyla_counts = phyla_counts[(
-                        (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_10_phyla_16S))
-                    )].sum()
-                    top_phyla_counts.loc['Other'] = other_phyla_counts
-                    top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
-
-                    # Create stacked bar figure
-                    base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
-                    stacked_bar_labels = top_phyla_counts.columns
-                    fig_data = [go.Bar(
-                        name=top_phyla_counts.index[0],
-                        x=stacked_bar_labels,
-                        y=base,
-                        customdata=base.copy(),
-                        marker=go.bar.Marker(color=colors_16S[top_phyla_counts.index[0]]),
-                        hovertemplate='Rel. Abundance:%{customdata:.3f}',
-                        offsetgroup=1,
-                    )]
-                    for phyla in top_phyla_counts.index[1:]:
-                        vals = top_phyla_counts.loc[phyla]
-                        fig_data.append(go.Bar(
-                            name=phyla,
-                            x=stacked_bar_labels,
-                            y=vals,
-                            marker=go.bar.Marker(color=colors_16S[phyla]),
-                            customdata=vals.copy(),
-                            hovertemplate='Rel. Abundance:%{customdata:.3f}',
-                            offsetgroup=1,
-                            base=base
-                        ))
-                        base += vals
-                    stacked_bar_fig = go.Figure(
-                        data=fig_data,
+        for dataset in ['16S', '18Sv4', '18Sv9']:
+            station_data = data_meta[(data_meta['Sta_ID'] == station_id)]
+            station_samples = station_data['sampleid'].tolist()
+            if dataset == '16S':
+                taxa_col_names = ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
+                asv_cols = pd.Series(data_16S.columns).isin(station_samples).values
+                if np.sum(asv_cols) == 0:
+                    empty_fig = go.Figure(
+                        data=[
+                            go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
+                            go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
+                        ],
                         layout=go.Layout(
                             title=f'Station {station_id} phyla distribution per sample',
-                            yaxis_title='Relative abundance'
+                            yaxis_title='Relative Abundance', height=600, width=600
                         )
                     )
-                    stacked_bar_figs[station_id][sample_type][dataset] =  stacked_bar_fig
+                    stacked_bar_figs[station_id][dataset] = empty_fig
+                    continue
+                
+                asv_col_names = pd.Series(data_16S.columns[asv_cols])
+                asv_col_sample_types = pd.Series([
+                    station_data[station_data['sampleid'] == sampleid]['sample_type'].iloc[0]
+                        for sampleid in asv_col_names
+                ])
+                asv_cols[0] = True
+                station_asvs = pd.concat([data_16S.loc[:,asv_cols], data_16S['silva_Taxon']], axis=1)
 
-                if dataset == '18Sv4':
-                    taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
-                    asv_cols = pd.Series(data_18Sv4.columns).isin(station_samples).values
-                    if np.sum(asv_cols) == 0:
-                        empty_fig = go.Figure(
-                            data=[
-                                go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
-                                go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
-                            ],
-                            layout=go.Layout(
-                                title=f'Station {station_id} phyla distribution per sample',
-                                yaxis_title='Relative Abundance', height=600, width=600
-                            )
-                        )
-                        stacked_bar_figs[station_id][sample_type][dataset] = empty_fig
-                        continue
-                    
-                    asv_cols[0] = True
-                    station_asvs = pd.concat([data_18Sv4.loc[:,asv_cols], data_18Sv4['pr2_Taxon']], axis=1)
+                # Get relative abundances
+                values = station_asvs.drop(['Feature.ID', 'silva_Taxon'], axis=1).fillna(0)
+                values = values / values.sum()
 
-                    # Get relative abundances
-                    values = station_asvs.drop(['Feature.ID', 'pr2_Taxon'], axis=1).fillna(0)
-                    values = values / values.sum()
+                # Count occurrences of each taxonomy category
+                taxonomies = station_asvs['silva_Taxon'].str.split('; ', expand=True)
+                taxonomies.columns = taxa_col_names
+                taxonomies = taxonomies.fillna('___Undetermined')[['Phylum']]
 
-                    # Count occurrences of each taxonomy category
-                    taxonomies = station_asvs['pr2_Taxon'].str.split(';', expand=True).iloc[:,:8]
-                    taxonomies.columns = taxa_col_names
-                    taxonomies = taxonomies.fillna('Undetermined')[['Phylum', 'Class']]
+                # get rid of the silva d__, p__, etc prefixes
+                taxonomies['Phylum'] = taxonomies['Phylum'].apply(lambda x: x[3:])
 
-                    # Get relative abundances of top phyla / special classes
-                    taxonomies = pd.concat([taxonomies, values], axis=1)
-                    phyla_counts = taxonomies.groupby('Phylum').sum()
-                    class_counts = taxonomies.groupby('Class').sum()
-                    if 'Syndiniales' not in class_counts.index:
-                        class_counts.loc['Syndiniales'] = 0
-                    if 'Bacillariophyta' not in class_counts.index:
-                        class_counts.loc['Bacillariophyta'] = 0
-                    for phylum in top_8_phyla_18Sv4 + ['Dinoflagellata', 'Ochrophyta']:
-                        if not phylum in phyla_counts.index:
-                            phyla_counts.loc[phylum] = 0
-                    phyla_counts.loc['Dinoflagellata'] -= class_counts.loc['Syndiniales']
-                    phyla_counts.loc['Ochrophyta'] -= class_counts.loc['Bacillariophyta']
-                    
-                    # Top 10 phyla + special classes
-                    top_phyla_counts = pd.concat([
-                        phyla_counts.loc[top_8_phyla_18Sv4],
-                        class_counts.loc[['Syndiniales', 'Bacillariophyta']]
-                    ])
-                    other_phyla_counts = phyla_counts[(
-                        (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_10_phyla_16S))
-                    )].sum()
-                    top_phyla_counts.loc['Other'] = other_phyla_counts
-                    top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
+                # Get relative abundances of top phyla / special classes
+                taxonomies = pd.concat([taxonomies, values], axis=1)
+                phyla_counts = taxonomies.groupby('Phylum').sum()
+                for phylum in top_10_phyla_16S:
+                    if phylum not in phyla_counts.index:
+                        phyla_counts.loc[phylum] = 0
+                top_phyla_counts = phyla_counts.loc[top_10_phyla_16S]
+                other_phyla_counts = phyla_counts[(
+                    (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_10_phyla_16S))
+                )].sum()
+                top_phyla_counts.loc['Other'] = other_phyla_counts
+                top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
 
-                    # Create stacked bar figure
-                    base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
-                    stacked_bar_labels = top_phyla_counts.columns
-                    fig_data = [go.Bar(
-                        name=top_phyla_counts.index[0],
+                top_phyla_counts.columns = asv_col_sample_types + '_' + asv_col_names
+                top_phyla_counts = top_phyla_counts[top_phyla_counts.columns.sort_values()]
+
+                # Create stacked bar figure
+                base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
+                stacked_bar_labels = top_phyla_counts.columns
+                fig_data = [go.Bar(
+                    name=top_phyla_counts.index[0],
+                    x=stacked_bar_labels,
+                    y=base,
+                    customdata=base.copy(),
+                    marker=go.bar.Marker(color=colors_16S[top_phyla_counts.index[0]]),
+                    hovertemplate='Rel. Abundance:%{customdata:.3f}',
+                    offsetgroup=1,
+                )]
+                for phyla in top_phyla_counts.index[1:]:
+                    vals = top_phyla_counts.loc[phyla]
+                    fig_data.append(go.Bar(
+                        name=phyla,
                         x=stacked_bar_labels,
-                        y=base,
-                        customdata=base.copy(),
-                        marker=go.bar.Marker(color=colors_18S[top_phyla_counts.index[0]]),
+                        y=vals,
+                        marker=go.bar.Marker(color=colors_16S[phyla]),
+                        customdata=vals.copy(),
                         hovertemplate='Rel. Abundance:%{customdata:.3f}',
                         offsetgroup=1,
-                    )]
-                    for phyla in top_phyla_counts.index[1:]:
-                        vals = top_phyla_counts.loc[phyla]
-                        fig_data.append(go.Bar(
-                            name=phyla,
-                            x=stacked_bar_labels,
-                            y=vals,
-                            marker=go.bar.Marker(color=colors_18S[phyla]),
-                            customdata=vals.copy(),
-                            hovertemplate='Rel. Abundance:%{customdata:.3f}',
-                            offsetgroup=1,
-                            base=base
-                        ))
-                        base += vals
-                    stacked_bar_fig = go.Figure(
-                        data=fig_data,
+                        base=base
+                    ))
+                    base += vals
+                stacked_bar_fig = go.Figure(
+                    data=fig_data,
+                    layout=go.Layout(
+                        title=f'Phyla Distribution Per Sample, Station "{station_id}"',
+                        yaxis_title='Relative abundance'
+                    )
+                )
+                stacked_bar_figs[station_id][dataset] =  stacked_bar_fig
+            # End 16S -----------------------------------------------------------------------------------------------
+
+            if dataset == '18Sv4':
+                taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
+                asv_cols = pd.Series(data_18Sv4.columns).isin(station_samples).values
+                if np.sum(asv_cols) == 0:
+                    empty_fig = go.Figure(
+                        data=[
+                            go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
+                            go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
+                        ],
                         layout=go.Layout(
                             title=f'Station {station_id} phyla distribution per sample',
-                            yaxis_title='Relative abundance'
+                            yaxis_title='Relative Abundance', height=600, width=600
                         )
                     )
-                    stacked_bar_figs[station_id][sample_type][dataset] =  stacked_bar_fig
-                if dataset == '18Sv9':
-                    taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
-                    asv_cols = pd.Series(data_18Sv9.columns).isin(station_samples).values
-                    if np.sum(asv_cols) == 0:
-                        empty_fig = go.Figure(
-                            data=[
-                                go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
-                                go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
-                            ],
-                            layout=go.Layout(
-                                title=f'Station {station_id} phyla distribution per sample',
-                                yaxis_title='Relative Abundance', height=600, width=600
-                            )
-                        )
-                        stacked_bar_figs[station_id][sample_type][dataset] = empty_fig
-                        continue
-                    
-                    asv_cols[0] = True
-                    station_asvs = pd.concat([data_18Sv9.loc[:,asv_cols], data_18Sv9['pr2_Taxon']], axis=1)
+                    stacked_bar_figs[station_id][dataset] = empty_fig
+                    continue
+                
+                asv_col_names = pd.Series(data_18Sv4.columns[asv_cols])
+                asv_col_sample_types = pd.Series([
+                    station_data[station_data['sampleid'] == sampleid]['sample_type'].iloc[0]
+                        for sampleid in asv_col_names
+                ])
+                asv_cols[0] = True
+                station_asvs = pd.concat([data_18Sv4.loc[:,asv_cols], data_18Sv4['pr2_Taxon']], axis=1)
 
-                    # Get relative abundances
-                    values = station_asvs.drop(['Feature.ID', 'pr2_Taxon'], axis=1).fillna(0)
-                    values = values / values.sum()
+                # Get relative abundances
+                values = station_asvs.drop(['Feature.ID', 'pr2_Taxon'], axis=1).fillna(0)
+                values = values / values.sum()
 
-                    # Count occurrences of each taxonomy category
-                    taxonomies = station_asvs['pr2_Taxon'].str.split(';', expand=True).iloc[:,:8]
-                    taxonomies.columns = taxa_col_names
-                    taxonomies = taxonomies.fillna('Undetermined')[['Phylum', 'Class']]
+                # Count occurrences of each taxonomy category
+                taxonomies = station_asvs['pr2_Taxon'].str.split(';', expand=True).iloc[:,:8]
+                taxonomies.columns = taxa_col_names
+                taxonomies = taxonomies.fillna('Undetermined')[['Phylum', 'Class']]
 
-                    # Get relative abundances of top phyla / special classes
-                    taxonomies = pd.concat([taxonomies, values], axis=1)
-                    phyla_counts = taxonomies.groupby('Phylum').sum()
-                    class_counts = taxonomies.groupby('Class').sum()
-                    if 'Syndiniales' not in class_counts.index:
-                        class_counts.loc['Syndiniales'] = 0
-                    if 'Bacillariophyta' not in class_counts.index:
-                        class_counts.loc['Bacillariophyta'] = 0
-                    for phylum in top_8_phyla_18Sv9 + ['Dinoflagellata', 'Ochrophyta']:
-                        if phylum not in phyla_counts.index:
-                            phyla_counts.loc[phylum] = 0
-                    phyla_counts.loc['Dinoflagellata'] -= class_counts.loc['Syndiniales']
-                    phyla_counts.loc['Ochrophyta'] -= class_counts.loc['Bacillariophyta']
-                    
-                    # Top 10 phyla + special classes
-                    top_phyla_counts = pd.concat([
-                        phyla_counts.loc[top_8_phyla_18Sv9],
-                        class_counts.loc[['Syndiniales', 'Bacillariophyta']]
-                    ])
-                    other_phyla_counts = phyla_counts[(
-                        (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_10_phyla_16S))
-                    )].sum()
-                    top_phyla_counts.loc['Other'] = other_phyla_counts
-                    top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
+                # Get relative abundances of top phyla / special classes
+                taxonomies = pd.concat([taxonomies, values], axis=1)
+                phyla_counts = taxonomies.drop('Class', axis=1).groupby('Phylum').sum()
+                class_counts = taxonomies.drop('Phylum', axis=1).groupby('Class').sum()
+                if 'Syndiniales' not in class_counts.index:
+                    class_counts.loc['Syndiniales'] = 0
+                if 'Bacillariophyta' not in class_counts.index:
+                    class_counts.loc['Bacillariophyta'] = 0
+                for phylum in top_8_phyla_18Sv4 + ['Dinoflagellata', 'Ochrophyta']:
+                    if not phylum in phyla_counts.index:
+                        phyla_counts.loc[phylum] = 0
+                phyla_counts.loc['Dinoflagellata'] -= class_counts.loc['Syndiniales']
+                phyla_counts.loc['Ochrophyta'] -= class_counts.loc['Bacillariophyta']
 
-                    # Create stacked bar figure
-                    base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
-                    stacked_bar_labels = top_phyla_counts.columns
-                    fig_data = [go.Bar(
-                        name=top_phyla_counts.index[0],
+                class_counts.index.names = ['Phylum']
+                # Top 10 phyla + special classes
+                top_phyla_counts = pd.concat([
+                    phyla_counts.loc[top_8_phyla_18Sv4],
+                    class_counts.loc[['Syndiniales', 'Bacillariophyta']]
+                ])
+                other_phyla_counts = phyla_counts.loc[(
+                    (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_8_phyla_18Sv4))
+                )].sum()
+                top_phyla_counts.loc['Other'] = other_phyla_counts
+                top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
+                
+                top_phyla_counts.columns = asv_col_sample_types + '_' + asv_col_names
+                top_phyla_counts = top_phyla_counts[top_phyla_counts.columns.sort_values()]
+                
+                # Create stacked bar figure
+                base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
+                stacked_bar_labels = top_phyla_counts.columns
+
+                fig_data = [go.Bar(
+                    name=top_phyla_counts.index[0],
+                    x=stacked_bar_labels,
+                    y=base,
+                    customdata=base.copy(),
+                    marker=go.bar.Marker(color=colors_18S[top_phyla_counts.index[0]]),
+                    hovertemplate='Rel. Abundance:%{customdata:.3f}',
+                    offsetgroup=1,
+                )]
+                for phyla in top_phyla_counts.index[1:]:
+                    vals = top_phyla_counts.loc[phyla]
+                    fig_data.append(go.Bar(
+                        name=phyla,
                         x=stacked_bar_labels,
-                        y=base,
-                        customdata=base.copy(),
-                        marker=go.bar.Marker(color=colors_18S[top_phyla_counts.index[0]]),
+                        y=vals,
+                        marker=go.bar.Marker(color=colors_18S[phyla]),
+                        customdata=vals.copy(),
                         hovertemplate='Rel. Abundance:%{customdata:.3f}',
                         offsetgroup=1,
-                    )]
-                    for phyla in top_phyla_counts.index[1:]:
-                        vals = top_phyla_counts.loc[phyla]
-                        fig_data.append(go.Bar(
-                            name=phyla,
-                            x=stacked_bar_labels,
-                            y=vals,
-                            marker=go.bar.Marker(color=colors_18S[phyla]),
-                            customdata=vals.copy(),
-                            hovertemplate='Rel. Abundance:%{customdata:.3f}',
-                            offsetgroup=1,
-                            base=base
-                        ))
-                        base += vals
-                    stacked_bar_fig = go.Figure(
-                        data=fig_data,
+                        base=base
+                    ))
+                    base += vals
+                stacked_bar_fig = go.Figure(
+                    data=fig_data,
+                    layout=go.Layout(
+                        title=f'Phyla Distribution Per Sample, Station "{station_id}"',
+                        yaxis_title='Relative abundance'
+                    )
+                )
+                stacked_bar_figs[station_id][dataset] =  stacked_bar_fig
+            # End 18Sv4 ---------------------------------------------------------------------------------------------
+
+            if dataset == '18Sv9':
+                taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
+                asv_cols = pd.Series(data_18Sv9.columns).isin(station_samples).values
+                if np.sum(asv_cols) == 0:
+                    empty_fig = go.Figure(
+                        data=[
+                            go.Bar(name='Group 1', x=['No Samples'], y=[1], offsetgroup=1),
+                            go.Bar(name='Group 2', x=['No Samples'], y=[1], offsetgroup=1, base=[1])
+                        ],
                         layout=go.Layout(
                             title=f'Station {station_id} phyla distribution per sample',
-                            yaxis_title='Relative abundance'
+                            yaxis_title='Relative Abundance', height=600, width=600
                         )
                     )
-                    stacked_bar_figs[station_id][sample_type][dataset] =  stacked_bar_fig
-            counter += 3
-            print('Finished: {0:.2f}%'.format(100 * counter / total_computing), end='\r')
+                    stacked_bar_figs[station_id][dataset] = empty_fig
+                    continue
+                asv_col_names = pd.Series(data_18Sv9.columns[asv_cols])
+                asv_col_sample_types = pd.Series([
+                    station_data[station_data['sampleid'] == sampleid]['sample_type'].iloc[0]
+                        for sampleid in asv_col_names
+                ])
+                asv_cols[0] = True
+                station_asvs = pd.concat([data_18Sv9.loc[:,asv_cols], data_18Sv9['pr2_Taxon']], axis=1)
+                
+                # Get relative abundances
+                values = station_asvs.drop(['Feature.ID', 'pr2_Taxon'], axis=1).fillna(0)
+                values = values / values.sum()
+
+                # Count occurrences of each taxonomy category
+                taxonomies = station_asvs['pr2_Taxon'].str.split(';', expand=True).iloc[:,:8]
+                taxonomies.columns = taxa_col_names
+                taxonomies = taxonomies.fillna('Undetermined')[['Phylum', 'Class']]
+
+                # Get relative abundances of top phyla / special classes
+                taxonomies = pd.concat([taxonomies, values], axis=1)
+                phyla_counts = taxonomies.drop('Class', axis=1).groupby('Phylum').sum()
+                class_counts = taxonomies.drop('Phylum', axis=1).groupby('Class').sum()
+                for phylum in top_8_phyla_18Sv9 + ['Dinoflagellata', 'Ochrophyta']:
+                    if phylum not in phyla_counts.index:
+                        phyla_counts.loc[phylum] = 0
+                for class_name in ['Syndiniales', 'Bacillariophyta']:
+                    if class_name not in class_counts.index:
+                        class_counts.loc[class_name] = 0
+                phyla_counts.loc['Dinoflagellata'] -= class_counts.loc['Syndiniales']
+                phyla_counts.loc['Ochrophyta'] -= class_counts.loc['Bacillariophyta']
+                
+                class_counts.index.names = ['Phylum']
+                # Top 10 phyla + special classes
+                top_phyla_counts = pd.concat([
+                    phyla_counts.loc[top_8_phyla_18Sv9],
+                    class_counts.loc[['Syndiniales', 'Bacillariophyta']]
+                ])
+                other_phyla_counts = phyla_counts[(
+                    (phyla_counts.index != 'Undetermined') & (~phyla_counts.index.isin(top_8_phyla_18Sv9))
+                )].sum()
+                top_phyla_counts.loc['Other'] = other_phyla_counts
+                top_phyla_counts.loc['Undetermined'] = phyla_counts.loc['Undetermined']
+
+                if not all(top_phyla_counts.columns == asv_col_names):
+                    print('HERE FKK')
+                
+                top_phyla_counts.columns = asv_col_sample_types + '_' + asv_col_names
+                top_phyla_counts = top_phyla_counts[top_phyla_counts.columns.sort_values()]
+                
+                # Create stacked bar figure
+                base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
+                stacked_bar_labels = top_phyla_counts.columns
+
+                # Create stacked bar figure
+                base = top_phyla_counts.loc[top_phyla_counts.index[0]].copy()
+                stacked_bar_labels = asv_col_names + asv_col_sample_types
+                fig_data = [go.Bar(
+                    name=top_phyla_counts.index[0],
+                    x=stacked_bar_labels,
+                    y=base,
+                    customdata=base.copy(),
+                    marker=go.bar.Marker(color=colors_18S[top_phyla_counts.index[0]]),
+                    hovertemplate='Rel. Abundance:%{customdata:.3f}',
+                    offsetgroup=1,
+                )]
+                for phyla in top_phyla_counts.index[1:]:
+                    vals = top_phyla_counts.loc[phyla]
+                    fig_data.append(go.Bar(
+                        name=phyla,
+                        x=stacked_bar_labels,
+                        y=vals,
+                        marker=go.bar.Marker(color=colors_18S[phyla]),
+                        customdata=vals.copy(),
+                        hovertemplate='Rel. Abundance:%{customdata:.3f}',
+                        offsetgroup=1,
+                        base=base
+                    ))
+                    base += vals
+                stacked_bar_fig = go.Figure(
+                    data=fig_data,
+                    layout=go.Layout(
+                        title=f'Phyla Distribution Per Sample, Station "{station_id}"',
+                        yaxis_title='Relative abundance'
+                    )
+                )
+                stacked_bar_figs[station_id][dataset] =  stacked_bar_fig
+            # End 18Sv9 ---------------------------------------------------------------------------------------------
+        # Finished all three datasets
+        counter += 3
+        print('Finished: {0:.2f}%'.format(100 * counter / total_computing), end='\r')
     return stacked_bar_figs
