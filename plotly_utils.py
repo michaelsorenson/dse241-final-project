@@ -96,7 +96,7 @@ def precompute_map_figs(data_meta):
     map_figs = {sample_type: {} for sample_type in sample_type_vals}
     for sample_type in sample_type_vals:
         for env_var in env_var_cols:
-            meta_subset = data_meta[data_meta['sample_type'] == sample_type]
+            meta_subset = data_meta[data_meta['sample_type'] == sample_type].copy()
             meta_subset = meta_subset[['Sta_ID', 'Lat_Dec', 'Lon_Dec', 'sample_type', env_var]].groupby('Sta_ID').agg({
                 'Lat_Dec': 'min',
                 'Lon_Dec': 'min',
@@ -104,11 +104,29 @@ def precompute_map_figs(data_meta):
                 env_var: 'mean'
             }).rename({'sample_type': 'Number of Samples'}, axis=1).reset_index()
             hover_names = meta_subset['Sta_ID'].apply(lambda x: '<b>Station: </b>' + x)
+            if env_var == 'NCDepth':
+                color_continuous_scale='viridis_r'
+            else:
+                color_continuous_scale='viridis'
             subset_fig = px.scatter_mapbox(meta_subset, lat='Lat_Dec', lon='Lon_Dec', center=cal_coast_center,
                                         color=env_var, hover_name=hover_names, hover_data='Number of Samples', #size="num_samples",
-                                        color_continuous_scale='viridis', size_max=15, zoom=4.5, mapbox_style='outdoors',
+                                        color_continuous_scale=color_continuous_scale, size_max=15, zoom=4.5, mapbox_style='outdoors',
                                         width=600, height=700, custom_data='Sta_ID')
             map_figs[sample_type][env_var] = subset_fig
+
+        # Create a figure where environmental variable is "Total number of samples"
+        meta_subset = data_meta[data_meta['sample_type'] == sample_type].copy()
+        meta_subset = meta_subset[['Sta_ID', 'Lat_Dec', 'Lon_Dec', 'sample_type']].groupby('Sta_ID').agg({
+            'Lat_Dec': 'min',
+            'Lon_Dec': 'min',
+            'sample_type': 'count'
+        }).rename({'sample_type': 'Total Number of Samples'}, axis=1).reset_index()
+        hover_names = meta_subset['Sta_ID'].apply(lambda x: '<b>Station: </b>' + x)
+        subset_fig = px.scatter_mapbox(meta_subset, lat='Lat_Dec', lon='Lon_Dec', center=cal_coast_center,
+                                    color='Total Number of Samples', hover_name=hover_names,
+                                    color_continuous_scale='viridis', size_max=15, zoom=4.5, mapbox_style='outdoors',
+                                    width=600, height=700, custom_data='Sta_ID')
+        map_figs[sample_type]['Total Number of Samples'] = subset_fig
     return map_figs
 
 
@@ -168,7 +186,7 @@ def precompute_sunburst_figs(data_meta, data_16S, data_18Sv4, data_18Sv9):
                     taxonomies = taxonomies[taxonomies['abundance_values'] != 0]
 
                     # set title of plot
-                    title = '16S Silva Taxonomy, Station "' + station_id + '"'
+                    title = '16S Silva Taxonomy<br>(innermost) Phylum->Class->Order (outermost)<br>Station "' + station_id + '"'
                 elif dataset == '18Sv4':
                     taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
                     # Merge with 18Sv4 dataframe to get taxonomy data for the samples
@@ -197,7 +215,7 @@ def precompute_sunburst_figs(data_meta, data_16S, data_18Sv4, data_18Sv9):
                     taxonomies = taxonomies[taxonomies['abundance_values'] != 0]
 
                     # set title of plot
-                    title = '18S v4 PR2 Taxonomy, Station "' + station_id + '"'
+                    title = '18S v4 PR2 Taxonomy<br>(innermost) Phylum->Class->Order (outermost)<br>Station "' + station_id + '"'
 
                 elif dataset == '18Sv9':
                     taxa_col_names = ['Kingdom', 'Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
@@ -228,11 +246,12 @@ def precompute_sunburst_figs(data_meta, data_16S, data_18Sv4, data_18Sv9):
                     taxonomies = taxonomies[taxonomies['abundance_values'] != 0]
 
                     # set title of plot
-                    title = '18S v9 PR2 Taxonomy, Station "' + station_id + '"'
+                    title = '18S v9 PR2 Taxonomy<br>(innermost) Phylum->Class->Order (outermost)<br>Station "' + station_id + '"'
                 taxonomies['relative_abundance'] = taxonomies['abundance_values'] / taxonomies['abundance_values'].sum()
                 taxonomies['relative_abundance'] = (taxonomies['relative_abundance'] * 100).round(2)
                 fig = px.sunburst(taxonomies, path=['Phylum', 'Class', 'Order'], values='relative_abundance',
                                   title=title, width=700, height=700)
+                fig.data[0].hovertemplate = '<b>%{label}</b><br>Relative Abundance: %{value}%'
                 taxonomies_all[station_id][sample_type][dataset] = taxonomies
                 sunburst_figs[station_id][sample_type][dataset] = fig
             counter += 3
