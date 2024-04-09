@@ -2,4 +2,6 @@
 __pycache__
 .DS_Store
 *.tsv
+views/data/*.json
 .env
+docker_ecr_push_code.txt
